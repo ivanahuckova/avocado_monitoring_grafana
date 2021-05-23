@@ -1,23 +1,14 @@
 #include <Arduino.h>
-#include <WiFi.h>
-#include <NTPClient.h>
-#include <HTTPClient.h>
+#include <Prometheus.h>
+#include <bearssl_x509.h>
 #include <DHT.h>
 #include <HCSR04.h>
 #include <LedControl.h>
-#include "config.h" // Configuration file
 
-// NTP Client
-WiFiUDP ntpUDP;
-NTPClient ntpClient(ntpUDP);
-
-// Loki & Infllux Clients
-HTTPClient httpInflux;
-HTTPClient httpLoki;
-HTTPClient httpGraphite;
+#include "certificates.h"
+#include "config.h"
 
 // Sensors
-
 DHT dht(DHT_PIN, DHT_TYPE);
 UltraSonicDistanceSensor distanceSensor(ULTRASONIC_PIN_TRIG, ULTRASONIC_PIN_ECHO);
 
@@ -31,61 +22,80 @@ byte sad[8] = {0x3C, 0x42, 0xA5, 0x81, 0x99, 0xA5, 0x42, 0x3C};
 byte off[8] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
 byte err[8] = {0x00, 0x00, 0x78, 0x40, 0x70, 0x40, 0x78, 0x00};
 
-// Function to set up the connection to the WiFi AP
-void setupWiFi() {
-  Serial.print("Connecting to '");
-  Serial.print(WIFI_SSID);
-  Serial.print("' ...");
+// Prometheus client
+Prometheus client;
+// Create a write request for 6 series
+WriteRequest req(6, 1536);
 
-  WiFi.mode(WIFI_STA);
-  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(500);
-    Serial.print(".");
+// Create a labelset arrays for the 2 labels that is going to be used for all series
+LabelSet label_set[] = {{ "monitoring_type", "avocado" }, { "board_type", "esp32-devkit1" }};
+
+// Define a TimeSeries which can hold up to 5 samples, has a name of `temperature/humidity/...` and uses the above labels of which there are 2
+TimeSeries ts1(5, "temperature_celsius", label_set, 2);
+TimeSeries ts2(5, "humidity_percent", label_set, 2);
+TimeSeries ts3(5, "heat_index_celsius", label_set, 2);
+TimeSeries ts4(5, "height_centimeter", label_set, 2);
+TimeSeries ts5(5, "light_lux", label_set, 2);
+TimeSeries ts6(5, "soil_moisture", label_set, 2);
+
+int loopCounter = 0;
+
+// Function to set up Prometheus client
+void setupClient() {
+  Serial.println("Setting up client...");
+  // Configure the client
+  client.setUrl(GC_URL);
+  client.setPath(GC_PATH);
+  client.setPort(GC_PORT);
+  client.setUser(GC_USER);
+  client.setPass(GC_PASS);
+  client.setUseTls(true);
+  client.setCerts(TAs, TAs_NUM);
+  client.setWifiSsid(WIFI_SSID);
+  client.setWifiPass(WIFI_PASSWORD);
+  client.setDebug(Serial);  // Remove this line to disable debug logging of the client.
+  if (!client.begin()){
+      Serial.println(client.errmsg);
   }
-
-  Serial.println("connected");
-  Serial.print("IP address: ");
-  Serial.println(WiFi.localIP());
+  // Add our TimeSeries to the WriteRequest
+  req.addTimeSeries(ts1);
+  req.addTimeSeries(ts2);
+  req.addTimeSeries(ts3);
+  req.addTimeSeries(ts4);
+  req.addTimeSeries(ts5);
+  req.addTimeSeries(ts6);
+  req.setDebug(Serial);  // Remove this line to disable debug logging of the write request serialization and compression.
 }
 
 
 // Function to display state of the plant on LED Matrix
 void displayState(byte character []) {
-  unsigned long currHour = ntpClient.getHours();
-  bool shouldDisplay = (currHour < 21 && currHour > 8);   // Turn off in the night
-  if (shouldDisplay)  {
-    for (int i = 0; i < 8; i++) {
-      lc.setRow(0, i, character[i]);
-    }
-  } else {
-    for (int i = 0; i < 8; i++)  {
-      lc.setRow(0, i, off[i]);
-    }
+  for (int i = 0; i < 8; i++) {
+    lc.setRow(0, i, character[i]);
   }
 }
 
 // Function to read soil moisture measurement
 int getSoilMoisture() {
   // Turn the sensor ON
-	digitalWrite(MOISTURE_POWER, HIGH);  
+  digitalWrite(MOISTURE_POWER, HIGH);  
   // Allow power to settle
-	delay(10);        
+  delay(10);        
   // Read the digital value form sensor                   
-	int val = digitalRead(MOISTURE_PIN); 
+  int val = digitalRead(MOISTURE_PIN); 
   // Turn the sensor OFF
-	digitalWrite(MOISTURE_POWER, LOW);   
+  digitalWrite(MOISTURE_POWER, LOW);   
   // Return moisture value
-  Serial.println(val);
-	return val;         
+  // Serial.println(val);
+  return val;         
 }
 
 // Function to read height of the plant
 double getHeight() {
   double manualCurrentHeight = 25;
   double height = DISTANCE_FROM_POT - distanceSensor.measureDistanceCm();
-  Serial.println(distanceSensor.measureDistanceCm());
-  if (height > manualCurrentHeight - 3 && height < manualCurrentHeight + 4) {
+  // Serial.println(distanceSensor.measureDistanceCm());
+  if (height > manualCurrentHeight - 5 && height < manualCurrentHeight + 5) {
     return height;
   }
 
@@ -108,7 +118,7 @@ bool checkIfReadingFailed(float hum, float cels, int moist, double height, float
   if (isnan(hum) || isnan(cels) || isnan(moist) || isnan(height) || isnan(light)) {
       // Print letter E as error
       displayState(err);
-      Serial.println(F("Failed to read from some sensor!"));
+      Serial.println(F("Failed to read from one of the sensors!"));
       return true;
     }
     return false;
@@ -140,16 +150,13 @@ void setup() {
 
   // Set up soil moisture pins - initially keep the moisture sensor OFF (prevents sensor rusting)
   pinMode(MOISTURE_POWER, OUTPUT);
-	digitalWrite(MOISTURE_POWER, LOW);
+  digitalWrite(MOISTURE_POWER, LOW);
 
   // Start the serial output at 115,200 baud 
   Serial.begin(115200);
 
   // Connect to WiFi
-  setupWiFi();
-
-  // Initialize a NTPClient to get time
-  ntpClient.begin();
+  setupClient();
 
   // Start the DHT sensor
   dht.begin();
@@ -162,28 +169,15 @@ void setup() {
 
 // LOOP: Function called in a loop to read from sensors and send them do databases
 void loop() {
-  // Reconnect to WiFi if required
-  if (WiFi.status() != WL_CONNECTED) {
-    WiFi.disconnect();
-    yield();
-    setupWiFi();
-  }
-
-  // Update time via NTP if required
-  while (!ntpClient.update()) {
-    yield();
-    ntpClient.forceUpdate();
-  }
-
   // Get current timestamp
-  unsigned long ts = ntpClient.getEpochTime();
+  int64_t time;
+  time = client.getTimeMillis();
 
   // Read humidity
   float hum = dht.readHumidity();
 
   // Read temperature as Celsius (the default)
   float cels = dht.readTemperature();
-  Serial.println(cels);
 
   // Read soil moisture (DRY: 1, WET: 0)
   int moist = getSoilMoisture();
@@ -206,7 +200,41 @@ void loop() {
   String message = createAndDisplayState(moist, cels);
 
   // Submit data
+  if (loopCounter >= 5) {
+    //Send
+    loopCounter = 0;
+    if (!client.send(req)) {
+      Serial.println(client.errmsg);
+    }
+    // Reset batches after a succesful send.
+    ts1.resetSamples();
+    ts2.resetSamples();
+    ts3.resetSamples();
+    ts4.resetSamples();
+    ts5.resetSamples();
+    ts6.resetSamples();
+  } else {
+    if (!ts1.addSample(time, cels)) {
+      Serial.println(ts1.errmsg);
+    }
+    if (!ts2.addSample(time, hum)) {
+      Serial.println(ts2.errmsg);
+    }
+    if (!ts3.addSample(time, hic)) {
+      Serial.println(ts3.errmsg);
+    }
+    if (!ts4.addSample(time, height)) {
+      Serial.println(ts4.errmsg);
+    }
+    if (!ts5.addSample(time, light)) {
+      Serial.println(ts5.errmsg);
+    }
+    if (!ts6.addSample(time, moist)) {
+      Serial.println(ts6.errmsg);
+    }
+    loopCounter++;
+  }
 
   // wait INTERVAL seconds, then do it again
-  delay(INTERVAL * 1000);
+  delay(2 * 1000);
 }
