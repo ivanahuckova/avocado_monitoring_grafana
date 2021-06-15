@@ -1,6 +1,6 @@
 #include <Arduino.h>
-#include <Prometheus.h>
-#include <bearssl_x509.h>
+#include <PromLokiTransport.h>
+#include <PrometheusArduino.h>
 #include <DHT.h>
 #include <HCSR04.h>
 #include <LedControl.h>
@@ -22,41 +22,57 @@ byte sad[8] = {0x3C, 0x42, 0xA5, 0x81, 0x99, 0xA5, 0x42, 0x3C};
 byte off[8] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
 byte err[8] = {0x00, 0x00, 0x78, 0x40, 0x70, 0x40, 0x78, 0x00};
 
-// Prometheus client
-Prometheus client;
+// Prometheus client and transport
+PromLokiTransport transport;
+PromClient client(transport);
+
 // Create a write request for 6 series
-WriteRequest req(6, 1536);
+WriteRequest req(6, 3074);
 
-// Create a labelset arrays for the 2 labels that is going to be used for all series
-LabelSet label_set[] = {{ "monitoring_type", "avocado" }, { "board_type", "esp32-devkit1" }};
+// Define a TimeSeries which can hold up to 5 samples
+TimeSeries ts1(5, "temperature_celsius", "{monitoring_type=\"avocado\",board_type=\"esp32_devkit1\",room=\"living_room\"}");
+TimeSeries ts2(5, "humidity_percent",  "{monitoring_type=\"avocado\",board_type=\"esp32_devkit1\",room=\"living_room\"}");
+TimeSeries ts3(5, "heat_index_celsius",  "{monitoring_type=\"avocado\",board_type=\"esp32_devkit1\",room=\"living_room\"}");
+TimeSeries ts4(5, "height_centimeter",  "{monitoring_type=\"avocado\",board_type=\"esp32_devkit1\",room=\"living_room\"}");
+TimeSeries ts5(5, "light_lux",  "{monitoring_type=\"avocado\",board_type=\"esp32_devkit1\",room=\"living_room\"}");
+TimeSeries ts6(5, "soil_moisture",  "{monitoring_type=\"avocado\",board_type=\"esp32_devkit1\",room=\"living_room\"}");
 
-// Define a TimeSeries which can hold up to 5 samples, has a name of `temperature/humidity/...` and uses the above labels of which there are 2
-TimeSeries ts1(5, "temperature_celsius", label_set, 2);
-TimeSeries ts2(5, "humidity_percent", label_set, 2);
-TimeSeries ts3(5, "heat_index_celsius", label_set, 2);
-TimeSeries ts4(5, "height_centimeter", label_set, 2);
-TimeSeries ts5(5, "light_lux", label_set, 2);
-TimeSeries ts6(5, "soil_moisture", label_set, 2);
 
 int loopCounter = 0;
 
 // Function to set up Prometheus client
 void setupClient() {
   Serial.println("Setting up client...");
-  // Configure the client
-  client.setUrl(GC_URL);
-  client.setPath(GC_PATH);
-  client.setPort(GC_PORT);
-  client.setUser(GC_USER);
-  client.setPass(GC_PASS);
-  client.setUseTls(true);
-  client.setCerts(TAs, TAs_NUM);
-  client.setWifiSsid(WIFI_SSID);
-  client.setWifiPass(WIFI_PASSWORD);
-  client.setDebug(Serial);  // Remove this line to disable debug logging of the client.
-  if (!client.begin()){
-      Serial.println(client.errmsg);
+
+  uint8_t serialTimeout;
+  while (!Serial && serialTimeout < 50) {
+    delay(100);
+    serialTimeout++;
   }
+
+  // Configure and start the transport layer
+  transport.setUseTls(true);
+  transport.setCerts(grafanaCert, strlen(grafanaCert));
+  transport.setWifiSsid(WIFI_SSID);
+  transport.setWifiPass(WIFI_PASSWORD);
+  transport.setDebug(Serial);  // Remove this line to disable debug logging of the client.
+  if (!transport.begin()) {
+      Serial.println(transport.errmsg);
+      while (true) {};
+  }
+
+  // Configure the client
+  client.setUrl(GC_PROM_URL);
+  client.setPath(GC_PROM_PATH);
+  client.setPort(GC_PORT);
+  client.setUser(GC_PROM_USER);
+  client.setPass(GC_PROM_PASS);
+  client.setDebug(Serial);  // Remove this line to disable debug logging of the client.
+  if (!client.begin()) {
+      Serial.println(client.errmsg);
+      while (true) {};
+  }
+
   // Add our TimeSeries to the WriteRequest
   req.addTimeSeries(ts1);
   req.addTimeSeries(ts2);
@@ -171,7 +187,7 @@ void setup() {
 void loop() {
   // Get current timestamp
   int64_t time;
-  time = client.getTimeMillis();
+  time = transport.getTimeMillis();
 
   // Read humidity
   float hum = dht.readHumidity();
@@ -203,7 +219,8 @@ void loop() {
   if (loopCounter >= 5) {
     //Send
     loopCounter = 0;
-    if (!client.send(req)) {
+    PromClient::SendResult res = client.send(req);
+    if (!res == PromClient::SendResult::SUCCESS) {
       Serial.println(client.errmsg);
     }
     // Reset batches after a succesful send.

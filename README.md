@@ -25,25 +25,28 @@ To build this system, you will need:
 - **1 USB charger**
 
 Plus:
+
 - **1 plant stand** to put this all together and build the monitoring system
 
 ![Image of hardware](imgs/setup.jpg)
 
 ## Libraries:
 
-- **Adafruit Unified Sensor** by Adafruit
 - **DHT sensor library by** Adafruit
 - **HCSR04** by Martin Sosic
-
+- **Adafruit Unified Sensor** by Adafruit
+- **ArduinoBearSSL** by Arduino
+- **ArduinoHttpClient** by Arduino
+- **PrometheusArduino** by Ed Welch
+- **PromLokiTransport** by Ed Welch
+- **SnappyProto** by Ed Welch
 
 ## Circuit & Wiring diagrams
 
 <img src="imgs/wire_diagram.png" width="700" title="Wire diagram">
 
-## Data storage and visualisation
+## Software
 
 Download this repo that includes the software for room comfort monitoring. Update config.h file with your names, passwords and API keys. Upload software to your board using Arduino IDE.
 
 ![Grafana dashboard](imgs/dashboard.png)
-
-

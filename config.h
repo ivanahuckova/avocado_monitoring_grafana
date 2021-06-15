@@ -23,8 +23,8 @@
 #define LED_CLK 21
 
 // Prometheus client
-#define GC_URL "prometheus-us-central1.grafana.net" // Url to Prometheus instance 
-#define GC_PATH "/api/prom/push" // Path
+#define GC_PROM_URL "prometheus-us-central1.grafana.net" // Url to Prometheus instance 
+#define GC_PROM_PATH "/api/prom/push" // Path
 #define GC_PORT 443
-#define GC_USER "" // Username
-#define GC_PASS "" // API key
+#define GC_PROM_USER "" // Username
+#define GC_PROM_PASS "" // API key
