@@ -4,7 +4,7 @@
 #define ID "avocado" // Add unique name for this sensor
 #define INTERVAL 5  // Add interval (e.g. 1 min)
 
-#define DHT_PIN 5    // Which pin is DHT 22 connected to
+#define DHT_PIN 5    // Which pin is DHT 11 connected to
 #define DHT_TYPE DHT11 // Type DHT 11
 
 #define MOISTURE_POWER 33 // Which pin is soil moisture sensor connected to as a source of power (prevents fast corrosioon)
